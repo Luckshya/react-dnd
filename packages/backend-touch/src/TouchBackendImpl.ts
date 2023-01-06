@@ -64,6 +64,7 @@ export class TouchBackendImpl implements Backend {
 	private dragOverTargetIds: string[] | undefined
 	private draggedSourceNode: HTMLElement | undefined
 	private draggedSourceNodeRemovalObserver: MutationObserver | undefined
+	private targetNodesByNode: Map<HTMLElement, string>
 
 	// Patch for iOS 13, discussion over #1585
 	private lastTargetTouchFallback: Touch | undefined
@@ -81,6 +82,7 @@ export class TouchBackendImpl implements Backend {
 		this.sourcePreviewNodes = new Map()
 		this.sourcePreviewNodeOptions = new Map()
 		this.targetNodes = new Map()
+		this.targetNodesByNode = new Map()
 		this.listenerTypes = []
 		this._mouseClientOffset = {}
 		this._isScrolling = false
@@ -319,11 +321,15 @@ export class TouchBackendImpl implements Backend {
 		/**
 		 * Attaching the event listener to the body so that touchmove will work while dragging over multiple target elements.
 		 */
-		this.addEventListener(this.document.body, 'move', handleMove as any)
+		// this.addEventListener(this.document.body, 'move', handleMove as any)
 		this.targetNodes.set(targetId, node)
+		this.targetNodesByNode.set(node, targetId)
 
 		return (): void => {
 			if (this.document) {
+				this.targetNodesByNode.delete(
+					this.targetNodes.get(targetId) as HTMLElement,
+				)
 				this.targetNodes.delete(targetId)
 				this.removeEventListener(this.document.body, 'move', handleMove as any)
 			}
@@ -546,20 +552,66 @@ export class TouchBackendImpl implements Backend {
 	 * visible for testing
 	 */
 	public _getDropTargetId = (node: Element): Identifier | undefined => {
-		const keys = this.targetNodes.keys()
-		let next = keys.next()
-		while (next.done === false) {
-			const targetId = next.value
-			if (node === this.targetNodes.get(targetId)) {
-				return targetId
-			} else {
-				next = keys.next()
-			}
-		}
-		return undefined
+		return this.targetNodesByNode.get(node as HTMLElement)
+		// const keys = this.targetNodes.keys()
+		// let next = keys.next()
+		// while (next.done === false) {
+		// 	const targetId = next.value
+		// 	if (node === this.targetNodes.get(targetId)) {
+		// 		return targetId
+		// 	} else {
+		// 		next = keys.next()
+		// 	}
+		// }
+		// return undefined
 	}
 
-	public handleTopMoveEndCapture = (e: Event): void => {
+	public performEndHoverElement = (e: MouseEvent | TouchEvent) => {
+		const root = this.options.rootElement
+
+		if (!this.document || !root || !this.monitor.isDragging()) {
+			return
+		}
+
+		let coords
+
+		switch (e.type) {
+			case eventNames.mouse.end:
+				coords = {
+					x: (e as MouseEvent).clientX,
+					y: (e as MouseEvent).clientY,
+				}
+				break
+
+			case eventNames.touch.end:
+				coords = {
+					x: (e as TouchEvent).touches[0]?.clientX || 0,
+					y: (e as TouchEvent).touches[0]?.clientY || 0,
+				}
+				break
+		}
+
+		const droppedOns =
+			coords != null
+				? this.document.elementsFromPoint(coords.x, coords.y)
+				: undefined
+
+		if (droppedOns) {
+			for (const node in droppedOns) {
+				const droppedOn = droppedOns[node] as HTMLElement
+				const targetId = this._getDropTargetId(droppedOn) as string | undefined
+				if (targetId !== undefined) {
+					this.handleMove(e, targetId)
+					this.handleTopMove(e)
+					break
+				}
+			}
+		}
+	}
+
+	public handleTopMoveEndCapture = (e: MouseEvent | TouchEvent): void => {
+		this.performEndHoverElement(e)
+
 		this._isScrolling = false
 		this.lastTargetTouchFallback = undefined
 
